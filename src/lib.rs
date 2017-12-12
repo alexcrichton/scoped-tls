@@ -104,8 +104,8 @@ impl<T> ScopedKey<T> {
     /// Inserts a value into this scoped thread local storage slot for a
     /// duration of a closure.
     ///
-    /// While `cb` is running, the value `t` will be returned by `get` unless
-    /// this function is called recursively inside of `cb`.
+    /// While `f` is running, the value `t` will be returned by `get` unless
+    /// this function is called recursively inside of `f`.
     ///
     /// Upon return, this function will restore the previous value, if any
     /// was available.
@@ -137,6 +137,21 @@ impl<T> ScopedKey<T> {
     pub fn set<F, R>(&'static self, t: &T, f: F) -> R
         where F: FnOnce() -> R
     {
+        self.maybe_set(Some(t), f)
+    }
+
+    /// Inserts a value into this scoped thread local storage slot for a
+    /// duration of a closure if some value is passed in. If `None` is passed in
+    /// this function will unset the value for the duration of `f`.
+    ///
+    /// Upon return, this function will restore the previous value, if any
+    /// was available.
+    ///
+    /// This function is useful in concert with `try_with` if you want to forward
+    /// a thread local variable to another thread.
+    pub fn maybe_set<F, R>(&'static self, t: Option<&T>, f: F) -> R
+        where F: FnOnce() -> R
+    {
         struct Reset {
             key: &'static LocalKey<Cell<usize>>,
             val: usize,
@@ -148,7 +163,7 @@ impl<T> ScopedKey<T> {
         }
         let prev = self.inner.with(|c| {
             let prev = c.get();
-            c.set(t as *const T as usize);
+            c.set(if let Some(t) = t { t as *const T as usize } else { 0 });
             prev
         });
         let _reset = Reset { key: self.inner, val: prev };
@@ -187,6 +202,20 @@ impl<T> ScopedKey<T> {
                            variable without calling `set` first");
         unsafe {
             f(&*(val as *const T))
+        }
+    }
+
+    /// Gets a value out of this scoped variable if possible.
+    ///
+    /// This function takes a closure which receives the value of this
+    /// variable. If the value is not available, the closure receives `None` instead.
+    pub fn try_with<F, R>(&'static self, f: F) -> R
+        where F: FnOnce(Option<&T>) -> R
+    {
+        if self.is_set() {
+            self.with(|v| f(Some(v)))
+        } else {
+            f(None)
         }
     }
 
