@@ -3,7 +3,7 @@
 [![Build Status](https://travis-ci.org/alexcrichton/scoped-tls.svg?branch=master)](https://travis-ci.org/alexcrichton/scoped-tls)
 [![Build status](https://ci.appveyor.com/api/projects/status/9tatexq47i3ee13k?svg=true)](https://ci.appveyor.com/project/alexcrichton/flate2-rs)
 
-[Documentation](http://alexcrichton.com/scoped-tls)
+[Documentation](https://docs.rs/scoped-tls)
 
 A Rust library providing the old standard library's `scoped_thread_local!` macro
 as a library implementation on crates.io.
