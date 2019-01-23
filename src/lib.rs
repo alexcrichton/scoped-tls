@@ -51,10 +51,12 @@ use std::cell::Cell;
 use std::marker;
 use std::thread::LocalKey;
 
+/// The macro. See the module level documentation for the description and examples.
 #[macro_export]
 #[cfg(not(feature = "nightly"))]
 macro_rules! scoped_thread_local {
-    (static $name:ident: $ty:ty) => (
+    ($(#[$attrs:meta])* static $name:ident: $ty:ty) => (
+        $(#[$attrs])*
         static $name: $crate::ScopedKey<$ty> = $crate::ScopedKey {
             inner: {
                 thread_local!(static FOO: ::std::cell::Cell<usize> = {
@@ -67,11 +69,13 @@ macro_rules! scoped_thread_local {
     )
 }
 
+/// The macro. See the module level documentation for the description and examples.
 #[macro_export]
 #[allow_internal_unstable]
 #[cfg(feature = "nightly")]
 macro_rules! scoped_thread_local {
-    ($vis:vis static $name:ident: $ty:ty) => (
+    ($(#[$attrs:meta])* $vis:vis static $name:ident: $ty:ty) => (
+        $(#[$attrs])*
         $vis static $name: $crate::ScopedKey<$ty> = $crate::ScopedKey {
             inner: {
                 thread_local!(static FOO: ::std::cell::Cell<usize> = {
@@ -265,5 +269,21 @@ mod tests {
 
         assert_eq!(rx.recv().unwrap(), 1);
         assert!(t.join().is_err());
+    }
+
+    #[test]
+    fn attrs_allowed() {
+        scoped_thread_local!(
+            /// Docs
+            static BAZ: u32
+        );
+
+        scoped_thread_local!(
+            #[allow(non_upper_case_globals)]
+            static quux: u32
+        );
+
+        let _ = BAZ;
+        let _ = quux;
     }
 }
