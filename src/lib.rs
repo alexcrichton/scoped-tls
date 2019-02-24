@@ -44,8 +44,6 @@
 //! ```
 
 #![deny(missing_docs, warnings)]
-#![cfg_attr(feature = "nightly", feature(macro_vis_matcher))]
-#![cfg_attr(feature = "nightly", feature(allow_internal_unstable))]
 
 use std::cell::Cell;
 use std::marker;
@@ -53,26 +51,6 @@ use std::thread::LocalKey;
 
 /// The macro. See the module level documentation for the description and examples.
 #[macro_export]
-#[cfg(not(feature = "nightly"))]
-macro_rules! scoped_thread_local {
-    ($(#[$attrs:meta])* static $name:ident: $ty:ty) => (
-        $(#[$attrs])*
-        static $name: $crate::ScopedKey<$ty> = $crate::ScopedKey {
-            inner: {
-                thread_local!(static FOO: ::std::cell::Cell<usize> = {
-                    ::std::cell::Cell::new(0)
-                });
-                &FOO
-            },
-            _marker: ::std::marker::PhantomData,
-        };
-    )
-}
-
-/// The macro. See the module level documentation for the description and examples.
-#[macro_export]
-#[allow_internal_unstable]
-#[cfg(feature = "nightly")]
 macro_rules! scoped_thread_local {
     ($(#[$attrs:meta])* $vis:vis static $name:ident: $ty:ty) => (
         $(#[$attrs])*
