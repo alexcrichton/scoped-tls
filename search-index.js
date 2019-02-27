@@ -1,0 +1,5 @@
+var N=null,E="",T="t",U="u",searchIndex={};
+var R=["scoped_tls","result","ScopedKey"];
+
+searchIndex[R[0]]={"doc":"Scoped thread-local storage","i":[[3,R[2],R[0],"Type representing a thread local storage key corresponding…",N,N],[11,"set",E,"Inserts a value into this scoped thread local storage slot…",0,[[["self"],[T],["f"]],["r"]]],[11,"with",E,"Gets a value out of this scoped variable.",0,[[["self"],["f"]],["r"]]],[11,"is_set",E,"Test whether this TLS key has been `set` for the current…",0,[[["self"]],["bool"]]],[14,"scoped_thread_local",E,"The macro. See the module level documentation for the…",N,N],[11,"into",E,E,0,[[["self"]],[U]]],[11,"from",E,E,0,[[[T]],[T]]],[11,"try_from",E,E,0,[[[U]],[R[1]]]],[11,"borrow",E,E,0,[[["self"]],[T]]],[11,"borrow_mut",E,E,0,[[["self"]],[T]]],[11,"type_id",E,E,0,[[["self"]],["typeid"]]],[11,"try_into",E,E,0,[[["self"]],[R[1]]]]],"p":[[3,R[2]]]};
+initSearch(searchIndex);addSearchOptions(searchIndex);
