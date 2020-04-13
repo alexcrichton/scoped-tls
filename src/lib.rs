@@ -23,6 +23,8 @@
 //!
 //! # Examples
 //!
+//! ## Basic usage
+//! 
 //! ```
 //! #[macro_use]
 //! extern crate scoped_tls;
@@ -42,6 +44,73 @@
 //! });
 //! # }
 //! ```
+//!
+//! ## Mutable value
+//! 
+//! ```
+//! #[macro_use]
+//! extern crate scoped_tls;
+//!
+//! scoped_thread_local!(static mut FOO: u32);
+//!
+//! # fn main() {
+//! // Initially each scoped slot is empty.
+//! assert!(!FOO.is_set());
+//!
+//! // When inserting a value, the value is only in place for the duration
+//! // of the closure specified.
+//! let mut x = 1;
+//! FOO.set(&mut x, || {
+//!     FOO.with(|slot| {
+//!         assert_eq!(*slot, 1);
+//! 
+//!         // We can mutate the value
+//!         *slot = 42;
+//!     });
+//! });
+//! 
+//! // Changes will be visible externally
+//! assert_eq!(x, 42);
+//! # }
+//! ```
+//!
+//! ## Higher-kinded types
+//! 
+//! This mode is incomaptible with the use of a mutable reference,
+//! because we require the type to be `Copy`, and for the lifetime
+//! parameter to be covariant.
+//! 
+//! (This means that the lifetime variable must not be used inside
+//! a mutable type like a Cell, or as the argument to a function
+//! type)
+//! 
+//! ```
+//! #[macro_use]
+//! extern crate scoped_tls;
+//!
+//! // Must implement Copy
+//! #[derive(Copy, Clone)]
+//! struct Foo<'a> {
+//!     x: &'a str, // Lifetime is covariant
+//!     y: i32,
+//! }
+//! 
+//! scoped_thread_local!(static FOO: for<'a> Foo<'a>);
+//!
+//! # fn main() {
+//! // Initially each scoped slot is empty.
+//! assert!(!FOO.is_set());
+//!
+//! // When inserting a value, the value is only in place for the duration
+//! // of the closure specified.
+//! FOO.set(Foo { x: "Hello", y: 42 }, || {
+//!     FOO.with(|slot| {
+//!         assert_eq!(slot.x, "Hello");
+//!         assert_eq!(slot.y, 42);
+//!     });
+//! });
+//! # }
+//! ```
 
 #![deny(missing_docs, warnings)]
 
@@ -49,9 +118,69 @@ use std::cell::Cell;
 use std::marker;
 use std::thread::LocalKey;
 
+
 /// The macro. See the module level documentation for the description and examples.
 #[macro_export]
 macro_rules! scoped_thread_local {
+    ($(#[$attrs:meta])* $vis:vis static $name:ident: for<$lt:lifetime> $ty:ty) => (
+        #[allow(needless_lifetimes)]
+        struct $name<$lt> where ::std::cell::Cell<::std::option::Option<$ty>>: 'static {
+            inner: &$lt ::std::thread::LocalKey<::std::cell::Cell<::std::option::Option<$ty>>>,
+        }
+        $(#[$attrs])*
+        $vis static $name: $name<'static> = {
+            type Hkt<$lt> = $ty;
+
+            thread_local!(static FOO: ::std::cell::Cell<::std::option::Option<Hkt<'static>>> = {
+                ::std::cell::Cell::new(None)
+            });
+
+            unsafe impl ::std::marker::Sync for $name<'static> {}
+            
+            impl $name<'static> {
+                pub fn set<'a, F, R>(&'static self, t: Hkt<'a>, f: F) -> R
+                    where F: ::std::ops::FnOnce() -> R
+                {
+                    struct Reset<T: 'static> {
+                        key: &'static ::std::thread::LocalKey<::std::cell::Cell<::std::option::Option<T>>>,
+                        val: ::std::option::Option<T>,
+                    }
+                    impl<T> ::std::ops::Drop for Reset<T> {
+                        fn drop(&mut self) {
+                            self.key.with(|c| c.set(self.val.take()));
+                        }
+                    }
+                    let prev = self.inner.with(|c| {
+                        let prev = c.get();
+                        // Safety: we are only changing the lifetime. We enforce the
+                        // lifetime constraints via the `Reset` struct.
+                        c.set(Some(unsafe { std::mem::transmute_copy::<Hkt<'a>, Hkt<'static>>(&t) }));
+                        prev
+                    });
+                    let _reset = Reset { key: self.inner, val: prev };
+                    f()
+                }
+            
+                pub fn with<F, R>(&'static self, f: F) -> R
+                    where F: for<'a> ::std::ops::FnOnce(Hkt<'a>) -> R
+                {
+                    let val = self.inner.with(|c| c.get());
+                    let val = val.expect("cannot access a scoped thread local variable without calling `set` first");
+
+                    // This also asserts that Hkt is covariant
+                    f(val)
+                }
+            
+                /// Test whether this TLS key has been `set` for the current thread.
+                pub fn is_set(&'static self) -> bool {
+                    self.inner.with(|c| c.get().is_some())
+                }
+            }
+            $name {
+                inner: &FOO,
+            }
+        };
+    );
     ($(#[$attrs:meta])* $vis:vis static $name:ident: $ty:ty) => (
         $(#[$attrs])*
         $vis static $name: $crate::ScopedKey<$ty> = $crate::ScopedKey {
@@ -63,7 +192,18 @@ macro_rules! scoped_thread_local {
             },
             _marker: ::std::marker::PhantomData,
         };
-    )
+    );
+    ($(#[$attrs:meta])* $vis:vis static mut $name:ident: $ty:ty) => (
+        $(#[$attrs])*
+        $vis static $name: $crate::ScopedKeyMut<$ty> = $crate::ScopedKeyMut {
+            inner: {
+                thread_local!(static FOO: ::std::cell::Cell<Option<&'static mut $ty>> = {
+                    ::std::cell::Cell::new(None)
+                });
+                &FOO
+            },
+        };
+    );
 }
 
 /// Type representing a thread local storage key corresponding to a reference
@@ -178,6 +318,79 @@ impl<T> ScopedKey<T> {
     }
 }
 
+/// Type representing a thread local storage key corresponding to a mutable reference
+/// to the type parameter `T`.
+///
+/// Keys are statically allocated and can contain a reference to an instance of
+/// type `T` scoped to a particular lifetime. Keys provides two methods, `set`
+/// and `with`, both of which currently use closures to control the scope of
+/// their contents.
+/// 
+/// This differs from a `ScopedKey` because it provides access through a mutable
+/// reference. As a result, when the `with(..)` method is used to access the value,
+/// the key will appear unset whilst the closure is running. This is to prevent
+/// the value being borrowed a second time.
+pub struct ScopedKeyMut<T: ?Sized + 'static> {
+    #[doc(hidden)]
+    pub inner: &'static LocalKey<Cell<Option<&'static mut T>>>,
+}
+
+unsafe impl<T: ?Sized + 'static> Sync for ScopedKeyMut<T> {}
+
+impl<T: ?Sized + 'static> ScopedKeyMut<T> {
+    fn replace<F, R>(&'static self, t: Option<&mut T>, f: F) -> R
+        where F: FnOnce(Option<&mut T>) -> R
+    {
+        struct Reset<T: ?Sized + 'static> {
+            key: &'static LocalKey<Cell<Option<&'static mut T>>>,
+            val: Option<&'static mut T>,
+        }
+        impl<T: ?Sized + 'static> Drop for Reset<T> {
+            fn drop(&mut self) {
+                self.key.with(|c| c.set(self.val.take()));
+            }
+        }
+        let prev = self.inner.with(move |c| {
+            // Safety: we are only changing the lifetime. We enforce the
+            // lifetime constraints via the `Reset` struct.
+            c.replace(t.map(move |r| unsafe { &mut *(r as *mut _) }))
+        });
+        let mut reset = Reset { key: self.inner, val: prev };
+        f(reset.val.as_mut().map(|x| &mut **x))
+    }
+
+    /// Inserts a value into this scoped thread local storage slot for a
+    /// duration of a closure.
+    pub fn set<F, R>(&'static self, t: &mut T, f: F) -> R
+        where F: FnOnce() -> R
+    {
+        self.replace(Some(t), |_| f())
+    }
+
+    /// Gets a value out of this scoped variable.
+    ///
+    /// This function takes a closure which receives the value of this
+    /// variable. For the duration of the closure, the key will appear
+    /// unset.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if `set` has not previously been called,
+    /// or if the call is nested inside another (multiple mutable borrows
+    /// of the same value are not allowed).
+    ///
+    pub fn with<F, R>(&'static self, f: F) -> R
+        where F: FnOnce(&mut T) -> R
+    {
+        self.replace(None, |val| f(val.expect("cannot access a scoped thread local variable without calling `set` first")))
+    }
+
+    /// Test whether this TLS key has been `set` for the current thread.
+    pub fn is_set(&'static self) -> bool {
+        self.replace(None, |prev| prev.is_some())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
@@ -263,5 +476,91 @@ mod tests {
 
         let _ = BAZ;
         let _ = quux;
+    }
+
+    #[test]
+    fn hkt_struct() {
+        #[derive(Copy, Clone)]
+        pub struct Foo<'a> {
+            x: &'a str,
+            y: &'a i32,
+        }
+        scoped_thread_local!(static BAR: for<'a> Foo<'a>);
+
+        assert!(!BAR.is_set());
+        BAR.set(Foo { x: "hi", y: &1 }, || {
+            assert!(BAR.is_set());
+            BAR.with(|slot| {
+                assert_eq!(slot.x, "hi");
+                assert_eq!(slot.y, &1);
+            });
+        });
+        assert!(!BAR.is_set());
+    }
+
+    #[test]
+    fn hkt_trait() {
+        scoped_thread_local!(static BAR: for<'a> &'a dyn std::fmt::Display);
+
+        assert!(!BAR.is_set());
+        BAR.set(&"Hello", || {
+            assert!(BAR.is_set());
+            BAR.with(|slot| {
+                assert_eq!(slot.to_string(), "Hello");
+            });
+            BAR.set(&42, || {
+                assert!(BAR.is_set());
+                BAR.with(|slot| {
+                    assert_eq!(slot.to_string(), "42");
+                });
+            });
+        });
+        assert!(!BAR.is_set());
+    }
+
+    #[test]
+    fn mut_value() {
+        scoped_thread_local!(static mut BAR: i32);
+
+        assert!(!BAR.is_set());
+        let mut x = 0;
+
+        BAR.set(&mut x, || {
+            assert!(BAR.is_set());
+            BAR.with(|slot| {
+                assert!(!BAR.is_set());
+                assert_eq!(*slot, 0);
+                *slot = 42;
+            });
+            let mut y = 2;
+            BAR.set(&mut y, || {
+                assert!(BAR.is_set());
+                BAR.with(|slot| {
+                    assert_eq!(*slot, 2);
+                    *slot = 15;
+                });
+            });
+            assert_eq!(y, 15);
+            assert!(BAR.is_set());
+        });
+        assert!(!BAR.is_set());
+        assert_eq!(x, 42);
+    }
+
+    #[test]
+    fn mut_trait() {
+        scoped_thread_local!(static mut BAR: dyn std::io::Write);
+
+        assert!(!BAR.is_set());
+        let mut x = Vec::new();
+
+        BAR.set(&mut x, || {
+            assert!(BAR.is_set());
+            BAR.with(|slot| {
+                slot.write_all(&[1, 2, 3]).unwrap();
+            });
+        });
+        assert!(!BAR.is_set());
+        assert_eq!(x, [1, 2, 3]);
     }
 }
