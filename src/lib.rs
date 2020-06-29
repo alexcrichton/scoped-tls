@@ -86,8 +86,8 @@ impl<T> ScopedKey<T> {
     /// Inserts a value into this scoped thread local storage slot for a
     /// duration of a closure.
     ///
-    /// While `cb` is running, the value `t` will be returned by `get` unless
-    /// this function is called recursively inside of `cb`.
+    /// While `f` is running, the value `t` will be returned by `get` unless
+    /// this function is called recursively inside of `f`.
     ///
     /// Upon return, this function will restore the previous value, if any
     /// was available.
