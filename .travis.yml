@@ -3,7 +3,7 @@ sudo: false
 
 matrix:
   include:
-    - rust: 1.30.0
+    - rust: 1.59.0
     - rust: stable
     - os: osx
     - rust: beta
