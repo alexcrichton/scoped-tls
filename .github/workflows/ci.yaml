@@ -2,6 +2,9 @@ on: [push, pull_request]
 
 name: CI
 
+env:
+  MSRV: 1.59
+
 jobs:
   test:
     name: Run tests
@@ -22,5 +25,14 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - uses: dtolnay/rust-toolchain@nightly
-      - run: rustup component add miri
+        with: { components: miri }
       - run: cargo +nightly miri test
+
+  msrv:
+    name: Run tests on msrv
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: "${{ env.MSRV }}" }
+      - run: cargo test
