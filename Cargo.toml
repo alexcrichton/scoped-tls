@@ -12,5 +12,5 @@ Library implementation of the standard library's old `scoped_thread_local!`
 macro for providing scoped access to thread local storage (TLS) so any type can
 be stored into TLS.
 """
-rust-version = "1.30"
+rust-version = "1.59"
 
