@@ -52,14 +52,12 @@ use std::{cell::Cell, marker, thread::LocalKey};
 macro_rules! scoped_thread_local {
     ($(#[$attrs:meta])* $vis:vis static $name:ident: $ty:ty) => (
         $(#[$attrs])*
-        $vis static $name: $crate::ScopedKey<$ty> = $crate::ScopedKey {
-            inner: {
-                ::std::thread_local!(static FOO: ::std::cell::Cell<*const ()> = const {
-                    ::std::cell::Cell::new(::std::ptr::null())
-                });
-                &FOO
-            },
-            _marker: ::std::marker::PhantomData,
+        $vis static $name: $crate::ScopedKey<$ty> = unsafe {
+            ::std::thread_local!(static FOO: ::std::cell::Cell<*const ()> = const {
+                ::std::cell::Cell::new(::std::ptr::null())
+            });
+            // Safety: nothing else can access FOO since it's hidden in its own scope
+            $crate::ScopedKey::new(&FOO)
         };
     )
 }
@@ -72,15 +70,23 @@ macro_rules! scoped_thread_local {
 /// and `with`, both of which currently use closures to control the scope of
 /// their contents.
 pub struct ScopedKey<T> {
-    #[doc(hidden)]
-    pub inner: &'static LocalKey<Cell<*const ()>>,
-    #[doc(hidden)]
-    pub _marker: marker::PhantomData<T>,
+    inner: &'static LocalKey<Cell<*const ()>>,
+    _marker: marker::PhantomData<T>,
 }
 
 unsafe impl<T> Sync for ScopedKey<T> {}
 
 impl<T> ScopedKey<T> {
+    #[doc(hidden)]
+    /// # Safety
+    /// `inner` must only be accessed through `ScopedKey`'s API
+    pub const unsafe fn new(inner: &'static LocalKey<Cell<*const ()>>) -> Self {
+        Self {
+            inner,
+            _marker: marker::PhantomData,
+        }
+    }
+
     /// Inserts a value into this scoped thread local storage slot for a
     /// duration of a closure.
     ///
