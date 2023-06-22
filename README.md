@@ -1,7 +1,6 @@
 # scoped-tls
 
 [![Build Status](https://travis-ci.org/alexcrichton/scoped-tls.svg?branch=master)](https://travis-ci.org/alexcrichton/scoped-tls)
-[![Build status](https://ci.appveyor.com/api/projects/status/9tatexq47i3ee13k?svg=true)](https://ci.appveyor.com/project/alexcrichton/flate2-rs)
 
 [Documentation](https://docs.rs/scoped-tls)
 
