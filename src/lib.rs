@@ -45,7 +45,7 @@
 
 #![deny(missing_docs, warnings)]
 
-use std::{cell::Cell, marker, thread::LocalKey};
+use std::{cell::Cell, marker, ptr::NonNull, thread::LocalKey};
 
 /// The macro. See the module level documentation for the description and examples.
 #[macro_export]
@@ -53,8 +53,8 @@ macro_rules! scoped_thread_local {
     ($(#[$attrs:meta])* $vis:vis static $name:ident: $ty:ty) => (
         $(#[$attrs])*
         $vis static $name: $crate::ScopedKey<$ty> = unsafe {
-            ::std::thread_local!(static FOO: ::std::cell::Cell<*const ()> = const {
-                ::std::cell::Cell::new(::std::ptr::null())
+            ::std::thread_local!(static FOO: ::std::cell::Cell<Option<::std::ptr::NonNull<$ty>>> = const {
+                ::std::cell::Cell::new(None)
             });
             // Safety: nothing else can access FOO since it's hidden in its own scope
             $crate::ScopedKey::new(&FOO)
@@ -69,18 +69,18 @@ macro_rules! scoped_thread_local {
 /// type `T` scoped to a particular lifetime. Keys provides two methods, `set`
 /// and `with`, both of which currently use closures to control the scope of
 /// their contents.
-pub struct ScopedKey<T> {
-    inner: &'static LocalKey<Cell<*const ()>>,
+pub struct ScopedKey<T: ?Sized + 'static> {
+    inner: &'static LocalKey<Cell<Option<NonNull<T>>>>,
     _marker: marker::PhantomData<T>,
 }
 
-unsafe impl<T> Sync for ScopedKey<T> {}
+unsafe impl<T: ?Sized> Sync for ScopedKey<T> {}
 
-impl<T> ScopedKey<T> {
+impl<T: ?Sized + 'static> ScopedKey<T> {
     #[doc(hidden)]
     /// # Safety
     /// `inner` must only be accessed through `ScopedKey`'s API
-    pub const unsafe fn new(inner: &'static LocalKey<Cell<*const ()>>) -> Self {
+    pub const unsafe fn new(inner: &'static LocalKey<Cell<Option<NonNull<T>>>>) -> Self {
         Self {
             inner,
             _marker: marker::PhantomData,
@@ -124,18 +124,18 @@ impl<T> ScopedKey<T> {
     where
         F: FnOnce() -> R,
     {
-        struct Reset {
-            key: &'static LocalKey<Cell<*const ()>>,
-            val: *const (),
+        struct Reset<T: ?Sized + 'static> {
+            key: &'static LocalKey<Cell<Option<NonNull<T>>>>,
+            val: Option<NonNull<T>>,
         }
-        impl Drop for Reset {
+        impl<T: ?Sized + 'static> Drop for Reset<T> {
             fn drop(&mut self) {
                 self.key.with(|c| c.set(self.val));
             }
         }
         let prev = self.inner.with(|c| {
             let prev = c.get();
-            c.set(t as *const T as *const ());
+            c.set(Some(t.into()));
             prev
         });
         let _reset = Reset {
@@ -173,17 +173,16 @@ impl<T> ScopedKey<T> {
     where
         F: FnOnce(&T) -> R,
     {
-        let val = self.inner.with(|c| c.get());
-        assert!(
-            !val.is_null(),
-            "cannot access a scoped thread local variable without calling `set` first"
-        );
-        unsafe { f(&*(val as *const T)) }
+        let val = self
+            .inner
+            .with(|c| c.get())
+            .expect("cannot access a scoped thread local variable without calling `set` first");
+        unsafe { f(val.as_ref()) }
     }
 
     /// Test whether this TLS key has been `set` for the current thread.
     pub fn is_set(&'static self) -> bool {
-        self.inner.with(|c| !c.get().is_null())
+        self.inner.with(|c| c.get().is_some())
     }
 }
 
@@ -272,5 +271,20 @@ mod tests {
 
         let _ = BAZ;
         let _ = quux;
+    }
+
+    #[test]
+    fn unsized_tls() {
+        scoped_thread_local!(static DYN: dyn std::fmt::Display);
+
+        DYN.set(&42 as _, || {
+            DYN.with(|n| assert_eq!(n.to_string(), "42"))
+        });
+
+        scoped_thread_local!(static SLICE: [i32]);
+
+        SLICE.set(&[1, 2, 3][..], || {
+            SLICE.with(|s| assert_eq!(s, &[1, 2, 3][..]))
+        });
     }
 }
